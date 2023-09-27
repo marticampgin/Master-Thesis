@@ -1,0 +1,22 @@
+# Deal with original messages
+For line in the email body:
+	remove line that starts with ">"
+
+
+# Deal with encryption
+For line in the email body:
+	check if n lines contains only alphanumeric chars with no spaces / punctuation
+	if n lines do contain it,
+	remove the wholy body
+
+
+# Transform lines that end with =
+for line in the email body:
+	if line
+
+
+# Unfortunately, we have to check for farewells in each line, cause
+there is a continuation after some of them
+
+# Simple rule to remove greetings: if fist line contains keywords OR a standalone word that
+starts with capital letter -> remove it
