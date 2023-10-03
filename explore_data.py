@@ -2,7 +2,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns 
 import random
 import pandas as pd
-import warnings 
+import warnings
+import re 
 
 from wordcloud import WordCloud
 from collections import Counter
@@ -88,9 +89,12 @@ class DataExplorer:
             plt.savefig(f'distributions/{wg}_body_len_dist')
 
     
-    def ngram_vectorizer(self, text_collection, vectorizer_type='count', wgs=[], top_n=20, ngram_range=(1,1), min_df=2):
-        documents = list(text_collection.values())[:len(wgs)]
-        str_documents = [' '.join(word for word in doc) for doc in documents]
+    def ngram_vectorizer(self, text_collection, vectorizer_type='count', wgs=[], top_n=20, ngram_range=(1,1), min_df=2, sent_lex=False):
+        if sent_lex: 
+            str_documents = [' '.join(word for word in doc) for doc in text_collection][:len(wgs)]
+        else:
+            documents = list(text_collection.values())[:len(wgs)]
+            str_documents = [' '.join(word for word in doc) for doc in documents]
 
         if vectorizer_type == 'tf_idf':
             vectorizer = TfidfVectorizer(min_df=min_df, ngram_range=ngram_range)
@@ -115,4 +119,34 @@ class DataExplorer:
             tdm = tdm.sort_values(by='total_count', ascending=False)
         
         print(tdm.head(top_n))
+        
+
+    def sent_lex_vectorizer(self, text_collection, lexicon_path='vader_lexicon.txt', pos_thres=2, neg_thresh=-2):
+        sentiment_lexicon = {}
+         
+        with open(lexicon_path, 'r') as lexicon:
+            lexicon_lines = [re.split('\t', line.strip()) for line in lexicon]
+    
+        for token, score, _, _ in lexicon_lines: 
+            if float(score) > pos_thres:
+                sentiment_lexicon[token] = 'pos'
+            
+            elif float(score) < neg_thresh: 
+                sentiment_lexicon[token] = 'neg'
+
+        sent_lex_docs = []
+        for doc in text_collection.values():
+            transformed_doc = []
+            for word in doc:
+                if word in sentiment_lexicon.keys():
+                    transformed_doc.append(word + '_' + sentiment_lexicon[word])
+            sent_lex_docs.append(transformed_doc)
+        
+        self.ngram_vectorizer(text_collection=sent_lex_docs,
+                              vectorizer_type='count',
+                              wgs=list(text_collection.keys())[:7],
+                              ngram_range=(1,1),
+                              min_df=1,
+                              sent_lex=True)
+
         
