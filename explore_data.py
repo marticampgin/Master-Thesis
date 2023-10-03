@@ -88,7 +88,8 @@ class DataExplorer:
             ax.set(title=f'Body lengths in "{wg.upper()}" WG')
             plt.savefig(f'distributions/{wg}_body_len_dist')
 
-    
+    # I THINK THAT THE WAY THE WG ARRAY IS HANDLED IS WRONG
+    # WHAT IF WGS PASSED IN ARE UNORDERED?
     def ngram_vectorizer(self, text_collection, vectorizer_type='count', wgs=[], top_n=20, ngram_range=(1,1), min_df=2, sent_lex=False):
         if sent_lex: 
             str_documents = [' '.join(word for word in doc) for doc in text_collection][:len(wgs)]
@@ -108,7 +109,7 @@ class DataExplorer:
         
         tdm.columns = vectorizer.get_feature_names_out()
         tdm = tdm.T
-        tdm.columns = [wg for wg in wgs]
+        tdm.columns = wgs
 
         if vectorizer_type == 'tf_idf':
             tdm['highest_score'] = tdm.max(axis=1)
@@ -121,7 +122,7 @@ class DataExplorer:
         print(tdm.head(top_n))
         
 
-    def sent_lex_vectorizer(self, text_collection, lexicon_path='vader_lexicon.txt', pos_thres=2, neg_thresh=-2):
+    def sent_lex_vectorizer(self, text_collection, wgs=[], lexicon_path='vader_lexicon.txt', pos_thres=2, neg_thresh=-2):
         sentiment_lexicon = {}
          
         with open(lexicon_path, 'r') as lexicon:
@@ -144,9 +145,37 @@ class DataExplorer:
         
         self.ngram_vectorizer(text_collection=sent_lex_docs,
                               vectorizer_type='count',
-                              wgs=list(text_collection.keys())[:7],
+                              wgs=wgs,
                               ngram_range=(1,1),
                               min_df=1,
                               sent_lex=True)
+
+    
+    def keyword_concordance(self, text_collection, wgs, keywords, left_context, right_context, num_samples):
+        for wg, bodies in text_collection.items():
+            for desired_wg in wgs:
+                num_samples_extracted = 0
+                samples = []
+                if wg == desired_wg:
+                    for keyword in keywords:
+                        for body in bodies:
+                            body = body.split()
+                            
+                            for i, word in enumerate(body):
+                                if keyword == word:
+                                    if i >= left_context and (i + right_context) < len(body):
+                                        left = body[i - left_context:i]
+                                        rigt = body[i+1:i+right_context]  # might be wrong
+                                        whole = left + word + right
+                                        num_samples_extracted += 1
+                                        samples.append(whole)
+                                        if num_samples_extracted == num_samples:
+                                            return samples
+
+
+
+
+
+
 
         
