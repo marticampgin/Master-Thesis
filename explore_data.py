@@ -151,10 +151,14 @@ class DataExplorer:
                               sent_lex=True)
 
     
+
+    # NEED TO WORK ON WHAT IS MEANT BY NUM_SAMPLES: IT MAKES SENSE TO IMPLELEMENT NUM SAMPLES
+    # PER KEYWORD, SINCE DOING THAT PER WHOLE GROUP KINDA DOESN'T MAKE MUCH SENSE
     def keyword_concordance(self, text_collection, wgs, keywords, left_context, right_context, num_samples):
+        samples = []
         for desired_wg in wgs:
+            samples_per_wg = []
             num_samples_extracted = 0
-            samples = []
             proceed_to_next_wg = False
             for wg, bodies in text_collection.items():
                 # Extracting samples for each WG
@@ -168,12 +172,13 @@ class DataExplorer:
                                 if keyword == word:
                                     if i >= left_context and (i + right_context) < len(body):
                                         left = body[i - left_context:i]
-                                        rigt = body[i+1:i+right_context]  # might be wrong
-                                        whole = left + list(word) + right
+                                        right = body[i+1:i+right_context + 1]  # might be wrong
+                                        whole = left + ['$'+word+'$'] + right
                                         num_samples_extracted += 1
-                                        samples.append([desired_wg, whole])
+                                        samples_per_wg.append([desired_wg, keyword, whole])
                                         if num_samples_extracted == num_samples:
                                             proceed_to_next_wg = True
+                                            samples.extend(samples_per_wg)
                                             break
                             if proceed_to_next_wg:
                                 break
@@ -181,6 +186,15 @@ class DataExplorer:
                             break
                 if proceed_to_next_wg:
                     break
+        
+        # MOVE IT TO A PANDAS DF, OR SOMETHING LIKE THAT, FOR A BETTER VISUALIZATION EXPERIENCE
+        print(f'Concordandce for the keywords {keywords} (+{left_context} keyword +{right_context})', end='\n\n')
+        for wg, keyword, context in samples:
+            print(f'WG: {wg.upper()}')
+            print(' '.join(word for word in context))
+            print("------------------------------", end='\n\n')
+
+
 
 
 
