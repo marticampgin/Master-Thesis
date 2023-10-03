@@ -152,25 +152,35 @@ class DataExplorer:
 
     
     def keyword_concordance(self, text_collection, wgs, keywords, left_context, right_context, num_samples):
-        for wg, bodies in text_collection.items():
-            for desired_wg in wgs:
-                num_samples_extracted = 0
-                samples = []
+        for desired_wg in wgs:
+            num_samples_extracted = 0
+            samples = []
+            proceed_to_next_wg = False
+            for wg, bodies in text_collection.items():
+                # Extracting samples for each WG
                 if wg == desired_wg:
+                    # Iterating over all keywords and each word in each body of the WG
                     for keyword in keywords:
                         for body in bodies:
                             body = body.split()
-                            
                             for i, word in enumerate(body):
+                                # If word matches the keyword, make sure the list isn't out of range
                                 if keyword == word:
                                     if i >= left_context and (i + right_context) < len(body):
                                         left = body[i - left_context:i]
                                         rigt = body[i+1:i+right_context]  # might be wrong
-                                        whole = left + word + right
+                                        whole = left + list(word) + right
                                         num_samples_extracted += 1
-                                        samples.append(whole)
+                                        samples.append([desired_wg, whole])
                                         if num_samples_extracted == num_samples:
-                                            return samples
+                                            proceed_to_next_wg = True
+                                            break
+                            if proceed_to_next_wg:
+                                break
+                        if proceed_to_next_wg:
+                            break
+                if proceed_to_next_wg:
+                    break
 
 
 
