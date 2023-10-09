@@ -7,12 +7,25 @@ from collections import defaultdict
 
 
 class DataPreparator:
+    """
+    A class that prepares/cleans dat a in various ways.
+    Usually used for pre- (and potentially post-) processing
+    of textual data, thus preparing it for further analysis. 
+    """
+
     def __init__(self, extractor):
         self.dataframe = None
         self.extractor = extractor
 
 
     def emails_df_cleaning(self, dataframe):
+        """
+        This method drops empty rows and duplicates from
+        a pandas dataframe of concatenated email messages.
+        It then filters out messages older that 2 years, 
+        before returning the dataframe. 
+        """
+
         print(f'Initial dataframe shape: {dataframe.shape}')
 
         dataframe = dataframe.dropna(subset=["Body"])  # removing rows w. empty bodies
@@ -37,6 +50,18 @@ class DataPreparator:
     
 
     def preprocess_bodies(self):
+
+        """
+        This method is resposible for peforming perhaps
+        the most of the email processing, as it cleans the 
+        email bodies. It utilizies a method of a separate
+        IETF_WG_MB_Extractor-class. After utilizing extractor
+        for pre-processing bodies, it then applies some
+        post-processing, such as removing empty bodies and
+        reformatting whitespaces, as well as providing
+        some statistics after processing bodies of text.   
+        """
+
         # ---------- PRE-PROCESSING ----------
         print("------PROCESSING------", end='\n\n')
         bodies = self.dataframe['Body'].tolist()
@@ -45,6 +70,7 @@ class DataPreparator:
 
         start = time.time()
 
+        # Utilizing processing method of IETF_WG_MB_Extractor-class
         processed_bodies_wgs, stats = self.extractor.process_email_bodies(bodies_wgs, 
                                                                           lower=True, 
                                                                           punc=True, 
@@ -81,11 +107,18 @@ class DataPreparator:
         for i, body_wg in enumerate(processed_bodies_wgs_no_empty): 
             processed_bodies_wgs_no_empty[i][0] = re.sub('\s{2,}', ' ', body_wg[0])
             processed_bodies_wgs_no_empty[i][0] = re.sub('_+', '', body_wg[0])
-
+          
         return processed_bodies_wgs_no_empty
     
 
     def wg_combined_bodies_to_dict(self, bodies):
+        """
+        For each WG, this method uses the WGs name as key and maps
+        it to a combined collections of all tokens from all email bodies,
+        belonging to that particular WG (excluding stopwords). This is 
+        used for further analyis. 
+        """
+
         stop_words = set(stopwords.words('english'))
         text_collection = {}
 
@@ -104,8 +137,50 @@ class DataPreparator:
     
 
     def wg_bodies_to_dict(self, bodies):
+        """
+        For each WG, this method uses the WGs name as key and maps
+        it to a collection of all email bodies belonging to that particular WG
+        without combining them and keeping each body separate. This is used for futher 
+        analysis. 
+        """
+
         text_collection = defaultdict(list)
         for body, wg in bodies:
             text_collection[wg].append(body)
         
         return text_collection
+    
+
+    # There are several points of notice here: 
+
+    # The number of messages varies drastically between each WG
+    # It is probably wise to inlcude some set percent of data from 
+    # Each working group, or somehow sample more samples from groups 
+    # With very few messages, to make sure that they are included
+
+    # Other problem concerns duplicates - there is a number of messages
+    # that appear to be identical. Removing them would be good to prevent 
+    # duplicates being both in training and validation data. 
+    # However, it is unclear for now what to do with duplicates that 
+    # Appear in different working groups: if we notice a duplicate in 
+    # appearing in different working groups, which group shoud we delete it
+    # from then? The choice will impact the sentiment analysis per wg afterwards 
+
+    def prepare_data_for_model(self, text_collection, max_context_win_size=512):
+        """
+        This method further processes and prepairs data for being sent to
+        a tokenizer/model. More specifically, it truncates texts longer than
+        max. context window size and removes duplicate/noisy samples. 
+        """
+    
+        for wg, bodies in text_collection.items():
+            all_bodies = []
+            for i, body in enumerate(bodies):
+                body = body.split()
+                if len(body) == 5:
+                    print(i, wg, body)
+                # Truncate bodies longer that 512 tokens
+                # if len(body) > max_context_win_size:
+                #    updated_text_collection[wg].append(" ".join(word for word in body[:max_context_win_size])) 
+
+                # Removing noisy messages among those that are less that 4 words long

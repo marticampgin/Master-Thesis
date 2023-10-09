@@ -15,7 +15,7 @@ class IETF_WG_MB_Extractor:
     IETF WORKING GROUP MAIL BODY EXTRACTOR
     --------------------------------------
     
-    This class scrapes the names of currentøy active IETF
+    This class scrapes the names of currently active IETF
     working groups (WGs) https://datatracker.ietf.org/wg/,
     compares the names against locally stored
     mail-archive file names downloaded from 
@@ -425,7 +425,7 @@ class IETF_WG_MB_Extractor:
                 # r'[^\w\s\.\,\?\!]' - keeps more of the context
                 processed_body = re.sub(r'[^\w\s]', '', processed_body)
                 
-            # Remove all digits
+            # Remove all digits (REMEMBER, THAT DIGITS MIGHT BE PARTS OF WORDS, E.G. WORD27 OR WO27RD)
             if digits:
                 processed_body = re.sub(r"\d+", "", processed_body)
                 
