@@ -1,8 +1,12 @@
 import time
 import re
+import pandas as pd
+import random 
 
 from nltk.corpus import stopwords
 from collections import defaultdict
+from typing import Type, List
+from ietf_wg_mb_extractor import IETF_WG_MB_Extractor
 # nltk.download('stopwords')
 
 
@@ -13,12 +17,12 @@ class DataPreparator:
     of textual data, thus preparing it for further analysis. 
     """
 
-    def __init__(self, extractor):
+    def __init__(self, extractor: Type[pd.DataFrame]) -> None:
         self.dataframe = None
         self.extractor = extractor
 
 
-    def emails_df_cleaning(self, dataframe):
+    def emails_df_cleaning(self, dataframe: Type[pd.DataFrame]) -> pd.DataFrame:
         """
         This method drops empty rows and duplicates from
         a pandas dataframe of concatenated email messages.
@@ -45,26 +49,25 @@ class DataPreparator:
         
         self.dataframe = dataframe
         print("-----------------------------------------")
-        print(f'Dataframe shape after cleaning: {dataframe.shape}', end='\n\n')
+        print(f'Dataframe shape after cleaning rows: {dataframe.shape}', end='\n\n')
         return dataframe
     
 
-    def preprocess_bodies(self):
+    def preprocess_bodies(self) -> List[List[str]]:
 
         """
         This method is resposible for peforming perhaps
         the most of the email processing, as it cleans the 
         email bodies. It utilizies a method of a separate
         IETF_WG_MB_Extractor-class. After utilizing extractor
-        for pre-processing bodies, it then applies some
-        post-processing, such as removing empty bodies and
-        reformatting whitespaces, as well as providing
-        some statistics after processing bodies of text.   
+        for pre-processing bodies, it prints some of the
+        statistics after processing the texts.   
         """
 
         # ---------- PRE-PROCESSING ----------
         print("------PROCESSING------", end='\n\n')
         bodies = self.dataframe['Body'].tolist()
+
         wgs = self.dataframe['Working Group'].tolist()
         bodies_wgs = list(zip(bodies, wgs))
 
@@ -73,8 +76,8 @@ class DataPreparator:
         # Utilizing processing method of IETF_WG_MB_Extractor-class
         processed_bodies_wgs, stats = self.extractor.process_email_bodies(bodies_wgs, 
                                                                           lower=True, 
-                                                                          punc=True, 
-                                                                          digits=True, 
+                                                                          punc=False, 
+                                                                          digits=False, 
                                                                           newline=True)     
 
         print(f"Prepocessing time: {time.time() - start:.2f} s.", end='\n\n')
@@ -83,35 +86,17 @@ class DataPreparator:
         print(f"Number of mails removed: {total_removed_bodies}")
         print("---------------------------------------")
         print(f"Encrypted messages: {stats['encryp']}")
-        print(f"Ill-formated messages: {stats['ill_format']}")
+        print(f"Ill from-formated messages: {stats['ill_from_format']}")
         print(f"Announc. messages: {stats['announ']}")
         print(f"Unknown endcoding messages: {stats['unknown_enc']}")
-        
+        print(f"Empty messages post-processing: {stats['empty_post_proc']}")
+        print(f'Diff. language: {stats["diff_lang"]}')
+        print(f'Diverse other noise: {stats["diverse_noise"]}')
 
-        # ---------- POST-PROCESSING ---------- 
-        # Removing empty messages, if any are present 
-        empty_messages = 0
-        processed_bodies_wgs_no_empty = []
-        
-        for body, wg in  processed_bodies_wgs:
-            if body == '':
-                empty_messages += 1
-                continue
-            processed_bodies_wgs_no_empty.append([body, wg])
-
-        print(f"Empty messages (after pre-processing): {empty_messages}")
-        print("---------------------------------------")
-        print(f"Total number of mails after processing: {len(processed_bodies_wgs_no_empty)}")
-
-        # Replacing 2+ whitespaces with 1 whitespace, and replacing underscore char. (_) with an empty string
-        for i, body_wg in enumerate(processed_bodies_wgs_no_empty): 
-            processed_bodies_wgs_no_empty[i][0] = re.sub('\s{2,}', ' ', body_wg[0])
-            processed_bodies_wgs_no_empty[i][0] = re.sub('_+', '', body_wg[0])
-          
-        return processed_bodies_wgs_no_empty
+        return processed_bodies_wgs
     
 
-    def wg_combined_bodies_to_dict(self, bodies):
+    def wg_combined_bodies_to_dict(self, bodies: List[List[str]]) -> dict[str, List[str]]:
         """
         For each WG, this method uses the WGs name as key and maps
         it to a combined collections of all tokens from all email bodies,
@@ -136,7 +121,7 @@ class DataPreparator:
         return text_collection
     
 
-    def wg_bodies_to_dict(self, bodies):
+    def wg_bodies_to_dict(self, bodies: List[List[str]]) -> dict[str, List[str]]:
         """
         For each WG, this method uses the WGs name as key and maps
         it to a collection of all email bodies belonging to that particular WG
@@ -151,36 +136,67 @@ class DataPreparator:
         return text_collection
     
 
-    # There are several points of notice here: 
-
-    # The number of messages varies drastically between each WG
-    # It is probably wise to inlcude some set percent of data from 
-    # Each working group, or somehow sample more samples from groups 
-    # With very few messages, to make sure that they are included
-
-    # Other problem concerns duplicates - there is a number of messages
-    # that appear to be identical. Removing them would be good to prevent 
-    # duplicates being both in training and validation data. 
-    # However, it is unclear for now what to do with duplicates that 
-    # Appear in different working groups: if we notice a duplicate in 
-    # appearing in different working groups, which group shoud we delete it
-    # from then? The choice will impact the sentiment analysis per wg afterwards 
-
-    def prepare_data_for_model(self, text_collection, max_context_win_size=512):
+    def prepare_data_for_model(self, text_collection: dict[str, List[str]], 
+                               max_context_win_size: int=512,
+                               max_body_len : int=1500, 
+                               percent_of_data: float=0.14,
+                               seed: int=7) -> dict[str, List[str]]:
         """
         This method further processes and prepairs data for being sent to
-        a tokenizer/model. More specifically, it truncates texts longer than
-        max. context window size and removes duplicate/noisy samples. 
+        a tokenizer/model. More specifically, for sentences consisting
+        of < 6 tokens, it extracts only specific sentences, determined by
+        the to_keep.txt file, containing manually extracted sentences to keep. 
+        It also truncates messages that exceed 512 tokens. 
         """
-    
+
+        # Figure out a way to deal with duplicates in a robust manner.
+        # For now, simply remove duplicates after extracting a percentage of 
+        # data from each group and combining samples. 
+        random.seed(seed)
+
+        with open("short_messages_to_keep.txt", 'r') as f:
+            to_keep = [line.rstrip().split(maxsplit=2) for line in f]
+
+        processed_bodies = defaultdict(list)
+
         for wg, bodies in text_collection.items():
-            all_bodies = []
             for i, body in enumerate(bodies):
                 body = body.split()
-                if len(body) == 5:
-                    print(i, wg, body)
-                # Truncate bodies longer that 512 tokens
-                # if len(body) > max_context_win_size:
-                #    updated_text_collection[wg].append(" ".join(word for word in body[:max_context_win_size])) 
+                
+                if len(body) > max_body_len:
+                    continue
 
-                # Removing noisy messages among those that are less that 4 words long
+                elif len(body) < 6:  # Only consider bodies of < 6 tokens long
+                    for idx_wg_body in to_keep:
+                        desired_id, desired_wg = idx_wg_body[0], idx_wg_body[1]
+                        if int(desired_id) == i and desired_wg == wg:  # Only keeping manually extracted email bodies, rest is noise
+                              processed_bodies[wg].append(" ".join(word for word in body))
+
+                elif len(body) > max_context_win_size:
+                    body = body[:max_context_win_size]  # Truncating bodies longer than 512 tokens
+                    processed_bodies[wg].append(" ".join(word for word in body))
+
+                # Simply append the body
+                else:
+                    processed_bodies[wg].append(" ".join(word for word in body))
+                
+    
+        # Train data: for now, simply extract the same given percentage of data from each WG, then remove duplicates
+        train_data = []
+        for bodies_list in processed_bodies.values():
+            n_samples = int(len(bodies_list) * percent_of_data)
+            sampled_bodies = random.sample(bodies_list, k=n_samples)
+            train_data.extend(sampled_bodies)
+
+        print(f'Requested num. of samples: {len(train_data)}')
+        train_data = list(set(train_data))
+        print(f'Actual num. of samples (due to post duplicate-removal): {len(train_data)}')
+
+        return train_data
+        
+
+        
+
+
+                    
+                 

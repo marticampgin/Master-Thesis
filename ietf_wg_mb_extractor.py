@@ -8,6 +8,7 @@ import contractions
 from tqdm import tqdm
 from mailparser_reply import EmailReplyParser
 from bs4 import BeautifulSoup
+from typing import List, Type, Tuple
 
 
 class IETF_WG_MB_Extractor:
@@ -31,16 +32,16 @@ class IETF_WG_MB_Extractor:
     model, or used for a downstream task. 
     
     """
-    def __init__(self, verbose=True, archive_path="email-archives/"):
+    def __init__(self, verbose: bool=True, archive_path: str="email-archives/") -> None:
         self.wgs_url = r"https://datatracker.ietf.org/wg/#INT"
         self.archive_path = archive_path
         self.active_wg_dataframes = None
         self.verbose = verbose
         self.lng = ["en", "de", "fr"]
 
-    def extract_wgs(self):
+    def _extract_wgs(self) -> List[str]:
         """
-        A function that scrapes all the active Working
+        A private method that scrapes all the active Working
         Groups (WGs) from the IETF-datatracker website by
         using Beautiful Soup.
         """
@@ -70,9 +71,9 @@ class IETF_WG_MB_Extractor:
         return wgs
 
     
-    def active_groups_in_files(self, filenames, wgs):
+    def _active_groups_in_files(self, filenames: List[List[str]], wgs: List[str]) -> List[str]:
         """
-        A function that compares all the scraped
+        A private method that compares all the scraped
         WG names against downloaded mail archives
         that include those names as filenames. 
         In case of a match, the name is added to a list.
@@ -91,18 +92,18 @@ class IETF_WG_MB_Extractor:
         return active_wg_files
 
     
-    def combine_wg_files(self, ratio=0.15):
+    def combine_wg_files(self, ratio: float=0.15) -> Type[pd.DataFrame]:
         """
-        A function that transforms .csv files of all scraped
+        A method that transforms .csv files of all scraped
         active WGs into Pandas dataframes, ads WG name 
         in a new column and concatenates all dfs into one
         big df. 
         """
         
-        active_wgs = self.extract_wgs()
+        active_wgs = self._extract_wgs()
         all_csv_files = os.listdir(self.archive_path)  # gathering all the file names
         filenames = [doc.rsplit(".", 1) for doc in all_csv_files]  # separating extension and filename
-        active_wgs_in_files = self.active_groups_in_files(filenames, active_wgs) # list of active WGs present in files
+        active_wgs_in_files = self._active_groups_in_files(filenames, active_wgs) # list of active WGs present in files
 
         # Converting active WGs .csv file to Pandas dataframe, and storing the respective WG name
         active_dfs = [(pd.read_csv(os.path.join(self.archive_path, act_wg_file)), act_wg_file) for act_wg_file in active_wgs_in_files]
@@ -127,7 +128,7 @@ class IETF_WG_MB_Extractor:
         self.active_wg_dataframes = big_df
 
     
-    def get_combined_wg_dataframes(self):
+    def get_combined_wg_dataframes(self) -> Type[pd.DataFrame]:
         """
         Returns the dataframe of all scraped active WGs
         """
@@ -135,21 +136,19 @@ class IETF_WG_MB_Extractor:
 
     
     def process_email_bodies(self, 
-                             bodies_wgs,
-                             punc=True, 
-                             digits=True, 
-                             lower=True,
-                             newline=True, 
-                             n_encryp_lines=3,
-                             n_equal_signs=3,
-                             qp_threshold=8, 
-                             max_greeting_length=4,
-                             date_line_depth=3):
+                             bodies_wgs: List[List[str]],
+                             punc: bool=True, 
+                             digits: bool=True, 
+                             lower: bool=True,
+                             newline: bool=True, 
+                             n_encryp_lines: int=3, 
+                             max_greeting_length: int=4,
+                             date_line_depth: int=3) -> Tuple[List[List[str]], dict[str, int]]:
 
         """
         A function that performs extensive pre-processing of email bodies.
         
-        1. First, it checks whether the body is quoted-printable encoded.
+        1. First, it checks whether the body is quopri-encoded.
         In case encoding is unidentifiable, the body is removed. 
         
         2. Then it checks whether the body is ill-formated. In case it is,
@@ -172,20 +171,18 @@ class IETF_WG_MB_Extractor:
         characters with whitespace, removing certain punctuation characters, and lowering the text.
         """
 
-        # Container for processed bodies
-        processed_bodies = []
+        processed_bodies = []   # Container for processed bodies
+
         removed_stats_dict = {'unknown_enc': 0,
-                                  'ill_format': 0,
-                                  'encryp': 0,
-                                  'announ': 0}
+                              'ill_from_format': 0,
+                              'encryp': 0,
+                              'announ': 0,
+                              'empty_post_proc': 0,
+                              'diverse_noise': 0,
+                              'diff_lang': 0}
 
         # Declaring all the regexes. Longer ones are compiled over several lines
-        ill_format_regex = '^\s*[Ff]rom:'
-        
-        base64_regex = '^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{4}|[A-Za-z0-9+\/]{3}=|[A-Za-z0-9+\/]{2}={2})$'
-        
-        names_greetings_regex = "(?:^[A-Z][a-z]+,$)|^[Hh](?:ello|i|ey)|^[Dd]ear|^[Tt]hank(?:s|\s+you)"
-        
+
         farewells_regex = re.compile(
             '(?:\s+)?(?:[Tt]hank(?:s(?:\s+again)?|\s+[Yy]ou(?:\s+again)?)|[Mm]any\s+thanks|'
             '(?:[Bb]est|[Kk]ind)\s+[Rr]egards|[Yy]ours(?:\s*[Ii]rrespectively)?|'
@@ -194,14 +191,21 @@ class IETF_WG_MB_Extractor:
         )
 
         announce_regex = re.compile(
-            '(?:A new Request for Comments is now available in online)|'
-            '(?:A New Internet-Draft is available from the on-line)|'
+            '(?:[Aa] new Request for Comments is now available in online)|'
+            '(?:[Aa] New Internet-Draft is available from the on-line)|'
             '(?:[A-Za-z]+ [A-Za-z]+ has requested publication)|'
-            '(?:A new meeting session request has just been submitted)|'
+            '(?:[Aa] new meeting session request has just been submitted)|'
             '(?:is inviting you to a scheduled [A-Za-z]+ meeting)|'
-            '(?:Reviewer:\s+[A-Za-z]+(?:\s+[A-Za-z]+\s*)*)|'
-            '(?:The [A-Za-z]+ has received a request from the)|'
-            '(?:The following [A-Za-z]+ report has been submitted for)'
+            '(?:[Rr]eviewer:\s+[A-Za-z]+(?:\s+[A-Za-z]+\s*)*)|'
+            '(?:[Tt]he [A-Za-z]+ has received a request from the)|'
+            '(?:[Tt]he following [A-Za-z]+ report has been .+ for)'
+            '(?:[Tt]he following errata report)|'
+            '(?:[Ee]vents without label \"editorial\")|'
+            '(?:[Tt]he session\(s\) that you have requested)|'
+            '(?:[Aa]n IPR disclosure that pertains to your Internet-Draft)|'
+            '(?:\w+(?: \w+)? has entered the following ballot position)|'
+            '(?:.+ working group (?:(?:changed the .+)|(?:is inviting you to a scheduled .+)) meeting)|'
+            '(?:.+ working group .+ will hold a)'
         )
 
         dates_regex = re.compile(
@@ -212,234 +216,216 @@ class IETF_WG_MB_Extractor:
             '(?:[A-Za-z]{3},\s+\d{1,2}\s+[A-Za-z]{3}\s+\d{4})|)'
         )
 
-        email_wrote_regex = re.compile(
-            '(?:<.+>\s+(?:(?:wrote)|(?:writes)))'
-        )
+        diverse_noise_regex = re.compile('(?:<font face)|'
+                                         '(?:<mb>.+\/mb>)|^(?:pull requests *)|'
+                                         '(?:<.+> was just expired)|'
+                                         '^(?:<html)', flags=re.IGNORECASE)
+        
+        email_wrote_regex = '(?:<.+>\s+(?:(?:wrote)|(?:writes)))'
 
+        diff_lang_regex = '(?:(?:(?:um|in)(?:.+)? )?nachricht)|(?:am um.+ sc)|(?:el.+ escribi)|(?: ha scritto)|(?:le.+ a crit)'
+
+        ill_format_regex = '^\s*[Ff]rom:'
+        
+        base64_regex = '^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{4}|[A-Za-z0-9+\/]{3}=|[A-Za-z0-9+\/]{2}={2})$'
+        
+        names_greetings_regex = "(?:^[A-Z][a-z]+,$)|^[Hh](?:ello|i|ey)|^[Dd]ear|^[Tt]hank(?:s|\s+you)"
 
         for body, wg in tqdm(bodies_wgs):
-            # Declaring all the necessary variables to 
-            # control the flow beneath
+            # Declaring all the necessary variables to control the flow beneath
             num_encrypted_lines = 0
             updated_body_lines = []
             body_removed = False
-            
-            # Detect quoted-printable encoding by looking for '=0A=' char sequence.
-            # Usually, the text is encoded using either utf-8 or windows-1252 encodings.
-            if '=0A=' in body:
-                # Try to decode with 'utf-8' encoding 
+
+            # Remove non-ascii characters
+            body = body.encode('ascii', 'ignore').decode()
+
+            # Decode quopri-encoding (utf-8 and windows-1252 are the most common)
+            # Try to decode with 'utf-8' encoding 
+            try:
+                body = quopri.decodestring(body).decode('utf-8')
+            except:
+                # Try to decode with 'Windows-1252' encoding
                 try:
-                    body = quopri.decodestring(body).decode('utf-8')
+                    body = quopri.decodestring(body).decode('windows-1252')
+                    # In case none of the encodings above worked, simply remove the body
                 except:
-                    # Try to decode with 'Windows-1252' encoding
-                    try:
-                        body = quopri.decodestring(body).decode('windows-1252')
-                        # In case none of the encodings above worked, simply remove the body
-                    except:
-                        removed_stats_dict['unknown_enc'] += 1
-                        continue
+                    removed_stats_dict['unknown_enc'] += 1
+                    continue
 
-            # Not all quoted-printable-encoded messages include '=0A=' sequence.
-            # Looking for '=' character at the end of lines
-            else:
-                temp_lines = body.split('\n')  # splitting lines by \n char
-                eq_lines_counter = 0
-                iters_since_last_hit = 0
+            # Running through EmailParser first
+            body = EmailReplyParser(languages=self.lng).parse_reply(text=body)
+
+            # Detecting diverse noise
+            if re.search(diverse_noise_regex, body.lower()):
+                removed_stats_dict['diverse_noise'] += 1
+                continue
+
+            # Bodies containg non-english words are hard to deal with and thus removed
+            if re.search(diff_lang_regex, body.lower()):
+                removed_stats_dict['diff_lang'] += 1
+                continue
+
+            # Remove carriage return 
+            body = body.replace("\r", "")
+
+            # Replace multiple new lines with only 1 new line
+            body_wo_new = re.sub('\n{2,}', '\n', body)
+
+            # Split body into lines
+            body_lines = body_wo_new.split("\n")
+            
+            # Some messages start with 'From: ...', without being prepended with
+            # '>' char. This essentially makes it hard to retrieve latest reply,
+            # separated from the original message. Thus, the messages are considered
+            # ill-formated and removed
+            ill_format_result = re.match(ill_format_regex, body_lines[0])
+            if ill_format_result:
+                removed_stats_dict['ill_from_format'] += 1
+                continue
+            
+            # Check whether the message body line is encrypted
+            for line in body_lines:
+                encrypted_line = re.fullmatch(base64_regex, line) 
                 
-                for line in temp_lines:
-                    # If more than qp_threshold lines didn't finish with '=' since last hit,
-                    # then it is likely that the message is not quoted-printable-encoded and
-                    # we stop iterating further
-                    if iters_since_last_hit >= qp_threshold:
-                        break
+                # Corner case: message is encrypted and is only 1 line long
+                if encrypted_line and len(body_lines) == 1:
+                    removed_stats_dict['encryp'] += 1
+                    body_removed = True  # setting a flag to avoid further processing
+                    break
+                    
+                elif encrypted_line:
+                    num_encrypted_lines += 1
 
-                    # If the line is not empty and ends with '='
-                    if line and line[-1] == '=':
-                        eq_lines_counter += 1  # got a hit
-                        iters_since_last_hit = 0  # reset iterations since last hit
+                else:
+                    break
+                    
+                # If the threshold of encrypted lines is reached, remove the whole body,
+                # since it is likely to be encoded
+                if num_encrypted_lines == n_encryp_lines:
+                    removed_stats_dict['encryp'] += 1
+                    body_removed = True
+                    break
+    
+            # Match-object for announcements
+            announce_line = re.match(announce_regex, body_lines[0]) 
 
-                        # If we reach the desired amount of lines that end with '='
-                        # and streak haven't been broken by iters_since_last_hit, it is likely that
-                        # message is quoted-printable-encoded.
-                        if eq_lines_counter == n_equal_signs:
-                            try:
-                                body = quopri.decodestring(body).decode('utf-8')
-                            except:
-                                try:
-                                    body = quopri.decodestring(body).decode('windows-1252')
-                                # If none of the above encodings are detected, remove the body
-                                except:
-                                    removed_stats_dict['unknown_enc'] += 1
-                                    body_removed = True
-                                    break           
-                    else:
-                        # Only add iterations since the last time '=' was detected if
-                        # '=' was detected in the first place
-                        if eq_lines_counter > 0:
-                            iters_since_last_hit += 1
+            # If announcement-body is detected, remove it
+            if announce_line:
+                removed_stats_dict['announ'] += 1
+                body_removed = True 
 
-            # In case body hasn't been removed, proceed with further processing
+            # Message is either an announcement or encryption, skip the rest of the processing 
             if body_removed:
                 continue
-            else:
-                # Remove carriage return 
-                body = body.replace("\r", "")
-                # Replace many new lines with only 1 new line
-                body_wo_new = re.sub('\n{2,}', '\n', body)
-                # Split body into lines
-                body_lines = body_wo_new.split("\n")
-
-                # Check if the message is ill-formatted, remove if so
-                ill_format_result = re.match(ill_format_regex, body_lines[0])
-
-                if ill_format_result:
-                    removed_stats_dict['ill_format'] += 1
-                    continue
-                
-                # Check whether the message body line is encrypted
-                for line in body_lines:
-                    encrypted_line = re.fullmatch(base64_regex, line) 
-                    
-                    # Corner case: message is encrypted and is only 1 line long
-                    if encrypted_line and len(body_lines) == 1:
-                        removed_stats_dict['encryp'] += 1
-                        body_removed = True  # setting a flag to avoid further processing
-                        break
-                        
-                    elif encrypted_line:
-                        num_encrypted_lines += 1
-
-                    else:
-                        break
-                        
-                    # If the threshold of encrypted lines is reached, remove the whole body,
-                    # since it is likely to be encoded
-                    if num_encrypted_lines == n_encryp_lines:
-                        removed_stats_dict['encryp'] += 1
-                        body_removed = True
-                        break
-    
-                # Message is encrypted, skip the rest of the processing
-                if body_removed:
-                    continue
-
-                # Potential Match-objects for salutations and announcements
-                greetings_line = re.match(names_greetings_regex, body_lines[0])  
-                announce_line = re.search(announce_regex, body_lines[0]) 
-                
-                # In case a pattern for a salutation is detected in the first line, and
-                # the number of words in line <= the given max. greeting length, remove it.
-                # The intuition is that lines with few words are more likely to contain greeting
-                if greetings_line and len(body_lines[0].split()) <= max_greeting_length:
-                    body_lines[0] = ''
-
-                # Check whether first date_line_depth lines contain dates or
-                # '[PERSON] WROTE patterns', and remove if detected.
-                # The higher the date_line_depth value, the more the accuracy, but
-                # also the complexity
-                first_n_lines = body_lines[:date_line_depth] 
             
-                for i, line in enumerate(first_n_lines):
-                    # Match-objects
-                    date_line = re.search(dates_regex, line)
-                    wrote_pattern_line = re.search(email_wrote_regex, line)
+            # Match object for greetings
+            greetings_line = re.match(names_greetings_regex, body_lines[0])  
+           
+            # In case a pattern for a salutation is detected in the first line, and
+            # the number of words in line <= the given max. greeting length, remove it.
+            # The intuition is that lines with few words are more likely to contain a greeting
+            if greetings_line and len(body_lines[0].split()) <= max_greeting_length:
+                body_lines[0] = ''
 
-                    if date_line:
-                        body_lines[i] = ''
+            # Check whether first date_line_depth lines contain dates or
+            # '[PERSON] WROTE'-like patterns, and remove if detected.
+            # The higher the date_line_depth value, the more the accuracy, but
+            # also the complexity. Default value of 4 seems to work well.
+            first_n_lines = body_lines[:date_line_depth] 
+        
+            for i, line in enumerate(first_n_lines):
+                # Match-objects
+                date_line = re.search(dates_regex, line)
+                wrote_pattern_line = re.search(email_wrote_regex, line)
 
-                    elif wrote_pattern_line:
-                        body_lines[i] = ''
-                        
-                # If announcement-body is detected, remove it
-                if announce_line:
-                    removed_stats_dict['announ'] += 1
-                    body_removed = True 
-                        
-                # Don't perform any processing if the body was removed
-                if body_removed:
+                if date_line:
+                    body_lines[i] = ''
+
+                elif wrote_pattern_line:
+                    body_lines[i] = ''
+
+            # Go through every line
+            for i, line in enumerate(body_lines):
+
+                # If line is an empty string or starts wiht >, ignore it  
+                orig_message_line = re.match('^\s*>', line) 
+                if not line or orig_message_line:
                     continue
+                     
+                # Check for farewells, if present: ignore it & everything that follows.
+                # Everything that follows farewells is usually not relevant.
+                farewell_line = re.fullmatch(farewells_regex, line) 
+                
+                if not farewell_line:
+                    updated_body_lines.append(line)
                     
                 else:
-                    # Go through every line
-                    for i, line in enumerate(body_lines):
+                    break
 
-                        # Expand contractions
-                        line = contractions.fix(line)    
-                        
-                        # If line is an empty string, ignore it
-                        if not line:
-                            continue
-                            
-                        # If line starts with >, ignore it 
-                        orig_message_line = re.match('^\s*>', line) 
-
-                        if orig_message_line:
-                            continue
-                    
-                        # Check for farewells, if present: ignore it & everything that follows it
-                        farewell_line = re.fullmatch(farewells_regex, line) 
-                        
-                        if not farewell_line:
-                            updated_body_lines.append(line)
-                            
-                        else:
+                # This part of code is specifically tailored to extract right
+                # body content from a mail specific to IETF, containing both the
+                # written message and automatically generated text
+                if 'COMMENT:' in line and i != len(body_lines) - 1:
+                    if '-' * 10 in body_lines[i + 1]:  # 10 is arbitrary, but works well
+                            updated_body_lines = body_lines[i + 2:]
                             break
-        
-                        # This part of code is specifically tailored to extract the mail 
-                        # from a a mail specific to IETF, containing both the mail and
-                        # automatically generated text
-                        if 'COMMENT:' in line and i != len(body_lines) - 1:
-                            if '-' * 10 in body_lines[i + 1]:
-                                 updated_body_lines = body_lines[i + 2:]
-                                 break
             
             # Restoring the body to its original structure
             processed_body = "\n".join(line for line in updated_body_lines)
             
-            # Running through EmailParser to further strip any original messages that
-            # weren't removed with the processing above.
-            processed_body = EmailReplyParser(languages=self.lng).parse_reply(text=processed_body)
-            
-            
             # Remove links
-            # FTP links? ftp://ftp.ietf.org/internet-drafts/
-            # (https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)
+            processed_body = re.sub(r'(?:(?:https?|ftp):\/\/)?[\w/\-?=%.]+\.[\w/\-?=%.]+', '[LINK]', processed_body)
 
-            processed_body = re.sub(r'(?:(?:https?|ftp):\/\/)?[\w/\-?=%.]+\.[\w/\-?=%.]+', '', processed_body)
-            
+            # Expand contractions
+            body = contractions.fix(body)
 
-            # Remove punctuations (except dots and commas, for now at least)
-            
-            '''
-            BEFORE REMOVING PUNCTUATION WE COULD TRY AND CREATE REGEX TO DETECT
-            SMILES/EMOTICONS AND KEEP THEIR INITIAL COORDINATES, 
-            AND THEN ADD THEM, OR SMTH LIKE THAT
-            '''
-
-            '''
-            FOR TEXT ANALYTICS, WE WILL REMOVE PUNCTUATION AND KEEP ONLY THE WORDS.
-            FOR DEEP-LEARNING, WE WILL KEEP MOST (HAVE TO DECIDE HOW MUCH) OF THE PUNCTUATION.
-            '''
-
-            if punc:
-                # r'[^\w\s\.\,\?\!]' - keeps more of the context
-                processed_body = re.sub(r'[^\w\s]', '', processed_body)
-                
-            # Remove all digits (REMEMBER, THAT DIGITS MIGHT BE PARTS OF WORDS, E.G. WORD27 OR WO27RD)
-            if digits:
-                processed_body = re.sub(r"\d+", "", processed_body)
-                
-            # Remove extra spaces and newlines
-            processed_body = processed_body.strip()
-            
+            # Remove line-terminators
             if newline:
                 processed_body = processed_body.replace("\n", " ")
                 processed_body = processed_body.replace("\t", " ")
+
+            # Replacing 2+ whitespaces with 1 whitespace
+            processed_body = re.sub('\s{2,}', ' ', processed_body)
             
+            # Remove punctuations
+            if punc:
+                processed_body = re.sub(r'r[^\w\s]', '', processed_body)
+            
+            # If punctuation is preserved, some specfifc pattern removal still has to take place
+            elif not punc:
+                processed_body = re.sub('(?!\w+)-{2,}(?!\w+)', '-', processed_body)  # word--word --> word-word
+                processed_body = re.sub('[=\-_\+]{2,}', '', processed_body)  # == / -- / __ / ++ --> = / - / _ / +
+                processed_body = re.sub('-?(?:\+\-){2,}(?:[\+\-])?', '', processed_body) # -+-+ / +-+- --> ''
+                processed_body = re.sub('(?:[\*\.\,] ?){2,}', '', processed_body)  # .. / ** / . . / * * --> ''
+                processed_body = re.sub('(?:[\\\/] ?){2,}', '', processed_body)  # sequences of slashes
+                processed_body = re.sub('[~\|]', '', processed_body)  # removing chars. that are rarely used
+
+            # Post-processing block. This requires a for-loop check, since
+            # regular expressions end up with catastrophic backtracking, resulting
+            # in an extremely slow code
+            patterns = ['said: ', 'wrote: ', 'writes: ', '<.*>: ']
+            for pattern in patterns:
+                match = re.search(pattern, processed_body)
+                if match:
+                    processed_body = processed_body[match.end() - 1:]
+
+            # Remove digits   
+            if digits:
+                processed_body = re.sub(r"\d+", "", processed_body)
+
+             # After most of the processing, some bodies might be empty - skip if so
+            if processed_body == '':
+                removed_stats_dict['empty_post_proc'] += 1
+                continue
+            
+            # Remove extra spaces and newlines from edges
+            processed_body = processed_body.strip()
+
             # Lowercase
             if lower:
                 processed_body = processed_body.lower()
-                
+
             processed_bodies.append([processed_body, wg])
 
         return processed_bodies, removed_stats_dict

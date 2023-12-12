@@ -8,6 +8,7 @@ import re
 from wordcloud import WordCloud
 from collections import Counter
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from typing import List, Type, Tuple
 
 class DataExplorer:
     """
@@ -18,10 +19,11 @@ class DataExplorer:
     down below.
     """
 
-    def __init__(self, colors):
+    def __init__(self, colors: List[str]) -> None:
         self.colors = colors
 
-    def subject_count(self, dataframe, n_most_common):
+
+    def subject_count(self, dataframe: Type[pd.DataFrame], n_most_common: int) -> None:
         """
         A simple method that counts and displays the n most
         common subjects in the dataframe of concatenated emails. 
@@ -38,14 +40,16 @@ class DataExplorer:
         print()
     
 
-    # TEXT COLLECTION SHOULD PROBABLY BE RENAMED TO WORD COLLECTION, OR SOMETHING MORE FITTING
-    def wg_most_commonly_used_words(self, text_collection, wg, n_tokens=20):
+    def wg_most_commonly_used_words(self, 
+                                    token_collection: dict[str, List[str]], 
+                                    wg: str, 
+                                    n_tokens: int=20) -> None:
         """
         This method count the n most commonly used words for a given WG
         and produces a bar-plot visualization for that. 
         """
 
-        tokens = text_collection[wg]
+        tokens = token_collection[wg]
 
         most_common_tokens, counts = [], []
     
@@ -64,7 +68,7 @@ class DataExplorer:
         plt.savefig(f'plots/{wg}_{n_tokens}_most_common_words')
 
     
-    def messages_per_wg(self, text_collection):
+    def messages_per_wg(self, text_collection: dict[str, List[str]]) -> None:
         """
         This method simply count and plots total number of messages per 
         each working group
@@ -84,7 +88,10 @@ class DataExplorer:
         plt.savefig('plots/num_messages_per_wg')
 
 
-    def wg_wordcloud(self, text_collection, wg, max_words):
+    def wg_wordcloud(self, 
+                     text_collection: dict[str, List[str]], 
+                     wg: str, 
+                     max_words: int) -> None:
         """
         This method count the n most commonly used words for a given WG
         and produces a WordCloud-visualization for that. 
@@ -101,23 +108,31 @@ class DataExplorer:
         plt.savefig(f'wordclouds/{wg}_{max_words}_words')
 
     
-    def wg_body_len_dist(self, text_collection, wg=None, kde=False, bins=45, whole=False, limit=10000):
+    def wg_body_len_dist(self, 
+                         text_collection: dict[str, List[str]], 
+                         wg: bool=None, 
+                         kde: bool=False, 
+                         bins: int=45, 
+                         whole: bool=False, 
+                         limit: int=10000) -> None:
         """
         This method produces and plots a  frequency distribution based on lenght of email bodies, given
-        desired or whole collection of WGs. 
+        desired WG or whole collection of WGs. 
         """
         warnings.filterwarnings("ignore")
 
         # In case we are interested in the whole collection (all WG bodies)
         if whole:
-            body_lengths = [len(body) 
+            body_lengths = [len(body.split()) 
                             for body_coll in text_collection.values()
                             for body in body_coll]
-            
+                        
         # In case we are interested in body lenghts of certain WG
         else:
-            body_lengths = [len(body) for body in text_collection[wg]]
+            body_lengths = [len(body.split()) for body in text_collection[wg]]
 
+
+        sorted(body_lengths, reverse=True)
         ax = sns.histplot(body_lengths,
                           kde=kde,
                           bins=bins,
@@ -139,8 +154,15 @@ class DataExplorer:
             ax.set(title=f'Body lengths in "{wg.upper()}" WG')
             plt.savefig(f'distributions/{wg}_body_len_dist')
 
-    # THE WAY WG ARRAY IS HANDLED IS PROBABLY WRONG - IF WGS PASSED ARE UNORDERED, THIS MAY BREAK THE SCRIPT
-    def ngram_vectorizer(self, text_collection, vectorizer_type='count', wgs=[], top_n=20, ngram_range=(1,1), min_df=2, sent_lex=False):
+    
+    def ngram_vectorizer(self, 
+                         text_collection: dict[str, List[str]], 
+                         vectorizer_type: str ='count', 
+                         wgs: List[str]=[], 
+                         top_n: int=20, 
+                         ngram_range: Tuple[int, int]=(1,1), 
+                         min_df: int=2, 
+                         sent_lex: bool=False) -> None:
         """
         This method produces and plots a term-document matrix, based on type of vectorizer (either count or tf-idf), and whether we 
         are considering unigrams, bigrams or more genrally n-grams. 
@@ -152,7 +174,7 @@ class DataExplorer:
             str_documents = [' '.join(word for word in doc) for doc in text_collection][:len(wgs)]
 
         else:
-            documents = list(text_collection.values())[:len(wgs)]
+            documents = [bodies for desired_wg in wgs for wg, bodies in text_collection.items() if wg==desired_wg]
             str_documents = [' '.join(word for word in doc) for doc in documents]
 
         if vectorizer_type == 'tf_idf':
@@ -183,7 +205,12 @@ class DataExplorer:
         print(tdm.head(top_n))
         
 
-    def sent_lex_vectorizer(self, text_collection, lexicon_path='vader_lexicon.txt', pos_thres=2, neg_thresh=-2):
+    def sent_lex_vectorizer(self, 
+                            text_collection: dict[str, List[str]], 
+                            lexicon_path: str='vader_lexicon.txt',
+                            wgs: List[str] = [], 
+                            pos_thres: int=2, 
+                            neg_thresh: int=-2) -> None:
         """
         This method extract words from a Sentiment Lexicon (this method is tailored for Vader Lexicon: 
         https://github.com/cjhutto/vaderSentiment) above or below a cerattain positivity/negativity threshold and
@@ -191,7 +218,7 @@ class DataExplorer:
         
         """
         sentiment_lexicon = {}
-        
+        documents = [bodies for desired_wg in wgs for wg, bodies in text_collection.items() if wg==desired_wg]
         # Processing lexicon and extracting the words
         with open(lexicon_path, 'r') as lexicon:
             lexicon_lines = [re.split('\t', line.strip()) for line in lexicon]
@@ -204,9 +231,8 @@ class DataExplorer:
                 sentiment_lexicon[token] = 'neg'
 
         sent_lex_docs = []
-        # Going through every email body and look for extracted 
-        # sentiment words
-        for doc in text_collection.values():
+        # Going through every email body and look for extracted sentiment words
+        for doc in documents:
             transformed_doc = []
             for word in doc:
                 if word in sentiment_lexicon.keys():
@@ -216,13 +242,19 @@ class DataExplorer:
         # Creating and plotting term-document matrix
         self.ngram_vectorizer(text_collection=sent_lex_docs,
                               vectorizer_type='count',
-                              wgs=list(text_collection.keys())[:7],
+                              wgs=wgs,
                               ngram_range=(1,1),
                               min_df=1,
                               sent_lex=True)
         
 
-    def keyword_concordance(self, text_collection, wgs, keywords, left_context, right_context, max_num_samples):
+    def keyword_concordance(self, 
+                            text_collection: dict[str, List[str]], 
+                            wgs: List[str], 
+                            keywords: List[str], 
+                            left_context: int, 
+                            right_context: int, 
+                            max_num_samples: int) -> None:
         """
         This method takes keywords and outputs a concordance (context of given length around the keyword).
         This is done for each WG, and is limited by the amount of samples to extract for each keyword.
