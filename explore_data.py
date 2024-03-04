@@ -4,19 +4,21 @@ import random
 import pandas as pd
 import warnings
 import re 
+import statistics
 
 from wordcloud import WordCloud
 from collections import Counter
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from typing import List, Type, Tuple
+from scipy.stats import norm
 
 class DataExplorer:
     """
     As the name suggests, this class is responsible for providing
     different means of exploring and analyzing processed data. 
     It can produce things like WordClouds, distribution plots, 
-    term-document mattices. For more detailed info, please check the methods
-    down below.
+    term-document matrices. For more detailed info, please check the 
+    class methods down below.
     """
 
     def __init__(self, colors: List[str]) -> None:
@@ -59,16 +61,19 @@ class DataExplorer:
             most_common_tokens.append(token)
             counts.append(count)
 
-        plt.figure(figsize=(18, 5))
+        plt.figure(figsize=(8, 4))
         plt.bar(most_common_tokens, 
                 counts, 
                 color=random.choices(self.colors, k=n_tokens))
         
         plt.title(f"Top {n_tokens} most commonly used words in {wg.upper()}")
-        plt.savefig(f'plots/{wg}_{n_tokens}_most_common_words')
 
     
-    def messages_per_wg(self, text_collection: dict[str, List[str]]) -> None:
+    def messages_per_wg(self, 
+                        text_collection: dict[str, List[str]], 
+                        top_n: int=50,
+                        histogram: bool=False,
+                        bins: int=50) -> None:
         """
         This method simply count and plots total number of messages per 
         each working group
@@ -76,16 +81,33 @@ class DataExplorer:
 
         bodies_counts = [(wg, len(bodies)) for wg, bodies in text_collection.items()]
         bodies_counts.sort(key = lambda x: x[1], reverse=True)
+        bodies_counts = bodies_counts[:top_n]
+
+        if histogram:
+            num_messages = [pair[1] for pair in bodies_counts]
+            plt.figure(figsize=(9, 5))
+            plt.hist(num_messages, 
+                     bins=bins, 
+                     density=True, 
+                     alpha=0.8,
+                     edgecolor='black', 
+                     color='royalblue')
+            plt.xticks(fontsize=12)
+            plt.yticks(fontsize=12)
+            plt.ylabel('Probability Density')
         
-        plt.figure(figsize=(18, 8))
-        plt.bar([pair[0] for pair in bodies_counts],
-                [pair[1] for pair in bodies_counts],
-                color = random.choices(self.colors, k=len(bodies_counts)),
-                align='edge',
-                edgecolor='black')
-        plt.title('Number of messages per each WG')
-        plt.xticks(rotation=90)
-        plt.savefig('plots/num_messages_per_wg')
+        else:
+            plt.figure(figsize=(9, 5))
+            plt.bar([pair[0] for pair in bodies_counts],
+                    [pair[1] for pair in bodies_counts],
+                    color = "royalblue",
+                    #align='edge',
+                    edgecolor='black')
+            plt.xticks(fontsize=12)
+            plt.yticks(fontsize=12)
+            plt.ylabel('Number of messages')
+
+        return bodies_counts
 
 
     def wg_wordcloud(self, 
@@ -105,21 +127,42 @@ class DataExplorer:
         plt.title(f'{max_words}-word WordCloud for {wg.upper()} WG')
         plt.imshow(wordcloud, interpolation='bilinear')
         plt.axis('off')
-        plt.savefig(f'wordclouds/{wg}_{max_words}_words')
 
     
     def wg_body_len_dist(self, 
                          text_collection: dict[str, List[str]], 
                          wg: bool=None, 
-                         kde: bool=False, 
+                         histogram: bool=False, 
                          bins: int=45, 
-                         whole: bool=False, 
-                         limit: int=10000) -> None:
+                         whole: bool=False,
+                         limit: List[int]=[0, 5000],
+                         avg_per_group=False) -> None:
         """
-        This method produces and plots a  frequency distribution based on lenght of email bodies, given
+        This method produces and plots a frequency distribution based on lenght of email bodies, given
         desired WG or whole collection of WGs. 
         """
         warnings.filterwarnings("ignore")
+
+        if avg_per_group:
+            avg_msg_lenghts_per_wg = []
+            for wg, body_coll in text_collection.items():
+                msg_lengths = [len(body.split()) for body in body_coll]
+                mean = statistics.mean(msg_lengths)
+                avg_msg_lenghts_per_wg.append(mean)
+        
+            plt.figure(figsize=(9, 5))
+            plt.hist(avg_msg_lenghts_per_wg, 
+                     bins=bins, 
+                     density=True, 
+                     alpha=0.8,
+                     edgecolor='black', 
+                     color='royalblue')
+            plt.xlim(limit)
+            plt.xticks(fontsize=12)
+            plt.yticks(fontsize=12)
+            plt.ylabel('Probability Density')
+
+            return sorted(avg_msg_lenghts_per_wg, reverse=True) 
 
         # In case we are interested in the whole collection (all WG bodies)
         if whole:
@@ -131,28 +174,20 @@ class DataExplorer:
         else:
             body_lengths = [len(body.split()) for body in text_collection[wg]]
 
+        if histogram:
+            plt.figure(figsize=(9, 5))
+            plt.hist(body_lengths, 
+                     bins=bins, 
+                     density=True, 
+                     alpha=0.8,
+                     edgecolor='black', 
+                     color='royalblue')
+            plt.xlim(limit)
+            plt.xticks(fontsize=12)
+            plt.yticks(fontsize=12)
+            plt.ylabel('Probability Density')
 
-        sorted(body_lengths, reverse=True)
-        ax = sns.histplot(body_lengths,
-                          kde=kde,
-                          bins=bins,
-                          edgecolor="black", 
-                          linewidth=1)
-        
-        # Applying a random colors of pre-defined colors for each bar
-        # (will probably be changed later)
-        for i, patch in enumerate(ax.patches):
-            ax.patches[i].set_facecolor(random.choices(self.colors, k=1)[0])
-
-        ax.set(xlim=(1, limit))
-        
-        if whole:
-            ax.set(title=f'Body lengths in whole collection')
-            plt.savefig(f'distributions/whole_body_len_dist')
-
-        else:
-            ax.set(title=f'Body lengths in "{wg.upper()}" WG')
-            plt.savefig(f'distributions/{wg}_body_len_dist')
+        return sorted(body_lengths, reverse=True)
 
     
     def ngram_vectorizer(self, 

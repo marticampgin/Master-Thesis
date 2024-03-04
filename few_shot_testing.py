@@ -29,6 +29,10 @@ twitter_roberta2labels = {v:k for k, v in labels2twitter_roberta.items()}
 labels2gh_roberta = {-1: 2, 0: 0, 1: 1}
 gh_roberta2labels = {v:k for k, v in labels2gh_roberta.items()}
 
+# Text2Text mappings
+t2t_int2str = {-1: 'negative', 0: 'neutral', 1: 'positive'}
+t2t_str2int = {v:k for k, v in t2t_int2str.items()}
+
 f1_metric = evaluate.load('f1')
 
 
@@ -43,14 +47,19 @@ def eval(pipe, model, model_name, test_ds, print_report=False):
     predicted_labels = []
     confidence_scores = []
 
+    print_name = None
+
     for out in pipe(KeyDataset(test_ds, "text")):
         label, score = out['label'], out['score']
 
         # str -> int, int -> int
         if 'twitter-roberta' in model_name or model_name == 'roberta-base':
-            label = twitter_roberta2labels[model.config.label2id[label]]  
+            label = twitter_roberta2labels[model.config.label2id[label]]
+            print_name = 'RoBERTa-twitter'  
         elif 'gh-roberta' in model_name:
             label = gh_roberta2labels[model.config.label2id[label]]
+            print_name = 'RoBERTa-github'  
+
 
         predicted_labels.append(label)
         confidence_scores.append(round(score, 3))
@@ -64,12 +73,13 @@ def eval(pipe, model, model_name, test_ds, print_report=False):
 
 
     if print_report:
+        print(f'Results for {print_name}:\n')
         print(classification_report(true_labels, predicted_labels, digits=4))
     else:
         return classification_report(true_labels, predicted_labels, output_dict=True)
 
 
-def load_data(train_path, test_path, few_shot_samples, tokenizer, max_len, model_name, stratify_seed=None):
+def load_data(train_path, test_path, few_shot_samples, tokenizer, max_len, model_name, stratify_seed=None, text2text=False):
 
     def preprocess_function(examples):
         return tokenizer(examples['text'], truncation=True, max_length=max_len)
@@ -80,13 +90,18 @@ def load_data(train_path, test_path, few_shot_samples, tokenizer, max_len, model
     train_data.astype({'label': 'int32'})
     test_data.astype({'label': 'int32'})
 
-    if 'twitter-roberta' in model_name or model_name == 'roberta-base':
-        train_data['label'] = train_data['label'].map(labels2twitter_roberta)
-        test_data['label'] = test_data['label'].map(labels2twitter_roberta)
+    if text2text:
+        train_data['label'] = train_data['label'].map(t2t_int2str)
+        test_data['label'] = test_data['label'].map(t2t_int2str)
+        
+    else:
+        if 'twitter-roberta' in model_name or model_name == 'roberta-base':
+            train_data['label'] = train_data['label'].map(labels2twitter_roberta)
+            test_data['label'] = test_data['label'].map(labels2twitter_roberta)
 
-    elif 'gh-roberta' in model_name:
-        train_data['label'] = train_data['label'].map(labels2gh_roberta)
-        test_data['label'] = test_data['label'].map(labels2gh_roberta)
+        elif 'gh-roberta' in model_name:
+            train_data['label'] = train_data['label'].map(labels2gh_roberta)
+            test_data['label'] = test_data['label'].map(labels2gh_roberta)
 
     if few_shot_samples > 0 and few_shot_samples < 203:
         # Perform startified sampling
@@ -98,6 +113,9 @@ def load_data(train_path, test_path, few_shot_samples, tokenizer, max_len, model
     train_ds = datasets.Dataset.from_pandas(pd.DataFrame(data=train_data))
     test_ds = datasets.Dataset.from_pandas(pd.DataFrame(data=test_data))
 
+    if text2text:
+        return train_ds, test_ds
+
     train_ds = train_ds.map(preprocess_function, batched=True)
     test_ds = test_ds = test_ds.map(preprocess_function, batched=True)
 
@@ -105,8 +123,8 @@ def load_data(train_path, test_path, few_shot_samples, tokenizer, max_len, model
 
 
 def main():
-    # model_name = 'cardiffnlp/twitter-roberta-base-sentiment-latest'
-    model_name = 'marticampgin/gh-roberta-base-sentiment'
+    model_name = 'cardiffnlp/twitter-roberta-base-sentiment-latest'
+    # model_name = 'marticampgin/gh-roberta-base-sentiment'
     # model_name = 'roberta-base'
 
     if model_name == 'roberta-base':
@@ -122,8 +140,8 @@ def main():
 
     few_shot_samples = 203  # 51, 102, 153, 203
 
-    train_path = 'train_data.csv'
-    test_path = 'test_data.csv'
+    train_path = 'data/train_data.csv'
+    test_path = 'data/test_data.csv'
 
     seed = 77
     num_of_runs = 3
@@ -264,7 +282,7 @@ def main():
                        'Macro avg': np.mean(macro_f1), 
                        'Weighted avg': np.mean(micro_f1)}
         
-        print(f"\n{few_shot_samples}-shot learning results after {num_of_runs} runs, averaged", 
+        print(f"\n{few_shot_samples}-shot learning results after {num_of_runs} runs, averaged for {model_name}", 
               end='\n------------------\n\n')
         
         for metric, result in avg_results.items():
