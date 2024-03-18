@@ -3,6 +3,8 @@ import numpy as np
 import datasets
 import evaluate
 import torch
+import random
+import os 
 
 from transformers import (
     AutoTokenizer,
@@ -14,26 +16,27 @@ from transformers import (
     )
 from sklearn.metrics import classification_report
 from transformers.pipelines.pt_utils import KeyDataset
+from argparse import ArgumentParser
 
 datasets.disable_progress_bar()
+f1_metric = evaluate.load('f1')
 
 # --------------- LABEL MAPPINGS ---------------
 
-# Roberta base, exactly the same as twitter-roberta
+# Mappings for roberta-base and roberta-twittes (identical)
 id2label = {0: "negative", 1: "neutral", 2: "positive"}
 label2id = {v:k for k, v in id2label.items()}
 
 labels2twitter_roberta = {-1: 0, 0: 1, 1: 2}
 twitter_roberta2labels = {v:k for k, v in labels2twitter_roberta.items()}
 
+# Mappings for roberta-github
 labels2gh_roberta = {-1: 2, 0: 0, 1: 1}
 gh_roberta2labels = {v:k for k, v in labels2gh_roberta.items()}
 
-# Text2Text mappings
+# Mappings for Text2Text models
 t2t_int2str = {-1: 'negative', 0: 'neutral', 1: 'positive'}
 t2t_str2int = {v:k for k, v in t2t_int2str.items()}
-
-f1_metric = evaluate.load('f1')
 
 
 def compute_metrics(eval_pred):
@@ -42,28 +45,40 @@ def compute_metrics(eval_pred):
     # Using micro-f1, since we are utilizing balanced dataset
     return f1_metric.compute(predictions=predictions, references=labels, average='micro')
 
+def set_seed(seed: None):
+    """Set all seeds to make results reproducible (deterministic mode).
+       When seed is None, disables deterministic mode.
+    :param seed: an integer to your choosing
+    """
+    if seed is not None:
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        np.random.seed(seed)
+        random.seed(seed)
+        os.environ['PYTHONHASHSEED'] = str(seed)
 
-def eval(pipe, model, model_name, test_ds, print_report=False):
+
+def eval(pipe, model, model_name, test_ds, print_report=False, return_pred_info=False, train_samples=-99):
     predicted_labels = []
     confidence_scores = []
+    text_samples = []
 
-    print_name = None
-
-    for out in pipe(KeyDataset(test_ds, "text")):
+    for i, out in enumerate(pipe(KeyDataset(test_ds, "text"))):
         label, score = out['label'], out['score']
+        text = test_ds[i]['text']
 
         # str -> int, int -> int
         if 'twitter-roberta' in model_name or model_name == 'roberta-base':
             label = twitter_roberta2labels[model.config.label2id[label]]
-            print_name = 'RoBERTa-twitter'  
+            
         elif 'gh-roberta' in model_name:
             label = gh_roberta2labels[model.config.label2id[label]]
-            print_name = 'RoBERTa-github'  
-
-
+             
         predicted_labels.append(label)
         confidence_scores.append(round(score, 3))
-
+        text_samples.append(text)
 
     if 'twitter-roberta' in model_name or model_name == 'roberta-base':
         true_labels = [twitter_roberta2labels[label] for label in test_ds['label']]
@@ -71,15 +86,27 @@ def eval(pipe, model, model_name, test_ds, print_report=False):
     elif 'gh-roberta' in model_name:
         true_labels = [gh_roberta2labels[label] for label in test_ds['label']]
 
+    if return_pred_info:
+        return {"texts": text_samples,
+                "true_labels": true_labels,
+                "predicted_labels": predicted_labels,
+                "confidence scores": confidence_scores}
 
     if print_report:
-        print(f'Results for {print_name}:\n')
-        print(classification_report(true_labels, predicted_labels, digits=4))
+        if train_samples != -99:
+            print(f'Results for {model_name} ({train_samples} samples):\n')
+            print(classification_report(true_labels, predicted_labels, digits=4))
     else:
         return classification_report(true_labels, predicted_labels, output_dict=True)
 
 
-def load_data(train_path, test_path, few_shot_samples, tokenizer, max_len, model_name, stratify_seed=None, text2text=False):
+def load_data(train_path, 
+              test_path, 
+              few_shot_samples, 
+              tokenizer, 
+              max_len, 
+              model_name, 
+              stratify_seed=None):
 
     def preprocess_function(examples):
         return tokenizer(examples['text'], truncation=True, max_length=max_len)
@@ -90,20 +117,19 @@ def load_data(train_path, test_path, few_shot_samples, tokenizer, max_len, model
     train_data.astype({'label': 'int32'})
     test_data.astype({'label': 'int32'})
 
-    if text2text:
+    if "flan-t5" in model_name:
         train_data['label'] = train_data['label'].map(t2t_int2str)
         test_data['label'] = test_data['label'].map(t2t_int2str)
-        
-    else:
-        if 'twitter-roberta' in model_name or model_name == 'roberta-base':
-            train_data['label'] = train_data['label'].map(labels2twitter_roberta)
-            test_data['label'] = test_data['label'].map(labels2twitter_roberta)
 
-        elif 'gh-roberta' in model_name:
-            train_data['label'] = train_data['label'].map(labels2gh_roberta)
-            test_data['label'] = test_data['label'].map(labels2gh_roberta)
+    elif 'twitter-roberta' in model_name or model_name == 'roberta-base':
+        train_data['label'] = train_data['label'].map(labels2twitter_roberta)
+        test_data['label'] = test_data['label'].map(labels2twitter_roberta)
 
-    if few_shot_samples > 0 and few_shot_samples < 203:
+    elif 'gh-roberta' in model_name:
+        train_data['label'] = train_data['label'].map(labels2gh_roberta)
+        test_data['label'] = test_data['label'].map(labels2gh_roberta)
+
+    if few_shot_samples > 0 and few_shot_samples < 200:
         # Perform startified sampling
         samples_per_label = int(few_shot_samples / 3) 
         train_data = train_data.groupby('label', group_keys=False)
@@ -113,45 +139,46 @@ def load_data(train_path, test_path, few_shot_samples, tokenizer, max_len, model
     train_ds = datasets.Dataset.from_pandas(pd.DataFrame(data=train_data))
     test_ds = datasets.Dataset.from_pandas(pd.DataFrame(data=test_data))
 
-    if text2text:
-        return train_ds, test_ds
-
-    train_ds = train_ds.map(preprocess_function, batched=True)
-    test_ds = test_ds = test_ds.map(preprocess_function, batched=True)
+    if not "flan-t5" in model_name:
+        train_ds = train_ds.map(preprocess_function, batched=True)
+        test_ds = test_ds = test_ds.map(preprocess_function, batched=True)
 
     return train_ds, test_ds
 
 
 def main():
-    model_name = 'cardiffnlp/twitter-roberta-base-sentiment-latest'
+    parser = ArgumentParser()
+    parser.add_argument("--model_name", type=str, help="Provide model name / model repository from HuggingFace")
+    parser.add_argument("--num_train_samples", type=int, help="Provide number of training samples (51, 102, 153, 200)")
+    parser.add_argument("--train_data_csv", type=str, help="Provide path to train CSV file", default="data/train_data.csv")
+    parser.add_argument("--test_data_csv", type=str, help="Provide path to test CSV file", default="data/test_data.csv")
+    args = parser.parse_args()
+    # model_name = 'cardiffnlp/twitter-roberta-base-sentiment-latest'
     # model_name = 'marticampgin/gh-roberta-base-sentiment'
     # model_name = 'roberta-base'
 
+    model_name = args.model_name
+    few_shot_samples = args.num_train_samples
+    train_path = args.train_data_csv
+    test_path = args.test_data_csv
+
+    default_single_seed = 11
+    set_seed(default_single_seed)
+    stratified_seeds = [11, 22, 33, 44, 55]
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    reports = []
+
     if model_name == 'roberta-base':
         model = AutoModelForSequenceClassification.from_pretrained(
-            model_name, num_labels=3, id2label=id2label, label2id=label2id
+            model_name, num_labels=3, id2label=id2label, label2id=label2id,
         )
     else:
         model = AutoModelForSequenceClassification.from_pretrained(model_name)
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    few_shot_samples = 203  # 51, 102, 153, 203
-
-    train_path = 'data/train_data.csv'
-    test_path = 'data/test_data.csv'
-
-    seed = 77
-    num_of_runs = 3
-    stratify_seeds = [77, 88, 99]
-
-    assert len(stratify_seeds) == num_of_runs
-
-    reports = []
-
-    MAX_LEN = tokenizer.max_model_input_sizes['roberta-base']
+    MAX_LEN = tokenizer.max_model_input_sizes['roberta-base']  # 512
     
     # Fine-tune all model parameters
     for param in model.parameters():
@@ -161,57 +188,51 @@ def main():
 
     training_args = TrainingArguments(
         output_dir=model_name + '-tested',
-        learning_rate=2e-5,  # seems to be the most stable lr
+        learning_rate=2e-5,  
         per_device_train_batch_size=8,
         per_device_eval_batch_size=8,
-        num_train_epochs=4,  # can vary between 2-4
-        weight_decay=0.01,  # could play with this parameter
+        num_train_epochs=4, 
+        weight_decay=0.01,  
         evaluation_strategy="epoch",
         logging_strategy = 'epoch',
         save_strategy="epoch",
         load_best_model_at_end=True,
         push_to_hub=False,
-        seed=seed,
+        seed=default_single_seed,
         disable_tqdm=True
     )
     
-    if few_shot_samples == 0:
+    # In case we want to test either zero-shot, or post full-finetuning performance
+    if few_shot_samples in (0, 200):
         # Evaluate zero-shot performance (no finetuning)
-        _, test_ds = load_data(train_path, test_path, 0, tokenizer, MAX_LEN, model_name)
+        if few_shot_samples == 0:
+            _, test_ds = load_data(train_path, test_path, few_shot_samples, tokenizer, MAX_LEN, model_name)
 
+        # Evaluate performance one whole dataset (full finetuning)
+        elif few_shot_samples == 200:
+            train_ds, test_ds = load_data(train_path, test_path, few_shot_samples, tokenizer, MAX_LEN, model_name)
+
+            trainer = Trainer(model=model,
+                              args=training_args,
+                              train_dataset=train_ds,
+                              eval_dataset=test_ds,  
+                              tokenizer=tokenizer,
+                              data_collator=data_collator,
+                              compute_metrics=compute_metrics)
+
+            trainer.train()
+        
         pipe = pipeline("text-classification", 
                         model=model,
                         tokenizer=tokenizer,
                         device=device,
                         truncation=True,
                         max_length=MAX_LEN)
-        
-        eval(pipe, model, model_name, test_ds, print_report=True)
-
-    elif few_shot_samples == 203:
-        # Run once on the whole dataset
-        train_ds, test_ds = load_data(train_path, test_path, 203, tokenizer, MAX_LEN, model_name)
-
-        trainer = Trainer(model=model,
-                          args=training_args,
-                          train_dataset=train_ds,
-                          eval_dataset=test_ds,  
-                          tokenizer=tokenizer,
-                          data_collator=data_collator,
-                          compute_metrics=compute_metrics)
-        
-        trainer.train()
-
-        pipe = pipeline("text-classification", 
-                        model=model,
-                        tokenizer=tokenizer,
-                        device=device,
-                        truncation=True,
-                        max_length=MAX_LEN)
-        
-        eval(pipe, model, model_name, test_ds, print_report=True)
+            
+        eval(pipe, model, model_name, test_ds, print_report=True, train_samples=few_shot_samples)
 
     else:
+        num_of_runs = 5
         # Perform N number of runs for more robust results
         for i in range(num_of_runs):
             train_ds, test_ds = load_data(train_path, 
@@ -220,8 +241,9 @@ def main():
                                           tokenizer, 
                                           MAX_LEN,
                                           model_name, 
-                                          stratify_seeds[i])
+                                          stratified_seeds[i])
             
+            # New model is trained and evaluated for each run
             trainer = Trainer(model=model,
                               args=training_args,
                               train_dataset=train_ds,
@@ -239,6 +261,7 @@ def main():
                             truncation=True,
                             max_length=MAX_LEN)
             
+            # Collect results
             reports.append(eval(pipe, model, model_name, test_ds))
 
             # Re-init model
@@ -270,6 +293,7 @@ def main():
             macro_f1.append(report['macro avg']['f1-score'])
             micro_f1.append(report['weighted avg']['f1-score'])
 
+        # Average collected results for each run 
         avg_results = {'Negative precison': np.mean(negative_prec),
                        'Negative recall': np.mean(negative_rec),
                        'Negative f1-score': np.mean(negative_f1),
@@ -290,8 +314,5 @@ def main():
 
         
 
-
-
-
-#if __name__ == '__main__':
-#    main()
+if __name__ == '__main__':
+    main()
