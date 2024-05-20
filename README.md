@@ -14,10 +14,10 @@ Each folder contains Python `(.py)` or Jupyter Notebook `(.ipynb)` files with th
 
 - [data](https://github.com/marticampgin/Master-Thesis/tree/main/data) contains the labeled dataset in the form of several files: 2 CSV files with train & test data. Moreover, a `(.pkl)` file containing a dictionary of unlabeled data samples is also included. The labeled data samples represent a subset of the unlabeled data (in other words, is included).
 
-- [requirements.txt](https://github.com/marticampgin/Master-Thesis/blob/main/requirements.txt) contains all the Python libraries we utilized to conduct this thesis. To install the libraries,
-      - make sure that you are using Python version 3.11.5 or higher;
-      - that you are in a correct virtual environment;
-      - use command `pip install -r requirements.txt`
+- [requirements.txt](https://github.com/marticampgin/Master-Thesis/blob/main/requirements.txt) contains all the Python libraries we utilized to conduct this thesis. To install the libraries, 
+      - make sure that you are using Python version 3.11.5 or higher; 
+      - that you are in a correct virtual environment; 
+      - use command `pip install -r requirements.txt` 
 
 
 
